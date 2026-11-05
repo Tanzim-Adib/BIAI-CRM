@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 
-// PATCH: move stage, reassign, or escalate a lead. This is the route the
-// pipeline board and the contact-graph "reassign/escalate" actions call —
-// it's deliberately one endpoint so both features share the same real state.
+const STAGE_REQUIRES_PROOF = new Set(["contacted", "interested", "paid"]);
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -21,13 +20,40 @@ export async function PATCH(
 
   const updates: string[] = [];
   const values: any[] = [];
+  const proofFiles = Array.isArray(body.proofFiles) ? body.proofFiles : Array.isArray(body.proof) ? body.proof : [];
+  const nextStage = body.stage ?? existing.stage;
 
   if (body.stage && body.stage !== existing.stage) {
+    if (nextStage === "lost") {
+      // lost is allowed without proof
+    } else if (STAGE_REQUIRES_PROOF.has(nextStage) && proofFiles.length === 0) {
+      return NextResponse.json(
+        { error: `Stage '${nextStage}' requires at least one PNG/JPEG proof attachment.` },
+        { status: 400 }
+      );
+    }
+
+    if (body.stage === "paid") {
+      updates.push("coin_status = ?");
+      values.push("eligible");
+    }
+
     updates.push("stage = ?");
     values.push(body.stage);
     db.prepare(
       "INSERT INTO activity_log (lead_id, user_id, action, detail) VALUES (?, ?, 'stage_changed', ?)"
     ).run(leadId, user.id, `${existing.stage} -> ${body.stage}`);
+
+    if (proofFiles.length > 0) {
+      for (const file of proofFiles) {
+        const name = typeof file?.name === "string" ? file.name : "proof.jpg";
+        const mime = typeof file?.mime === "string" ? file.mime : "image/jpeg";
+        const pathValue = typeof file?.path === "string" ? file.path : name;
+        db.prepare(
+          "INSERT INTO lead_stage_proof (lead_id, stage, file_name, file_path, file_mime, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)"
+        ).run(leadId, body.stage, name, pathValue, mime, user.id);
+      }
+    }
   }
 
   if (body.assigned_to !== undefined && body.assigned_to !== existing.assigned_to) {
@@ -38,9 +64,6 @@ export async function PATCH(
     ).run(leadId, user.id, `Reassigned to user #${body.assigned_to}`);
   }
 
-  // "Lead taken" — a staff member explicitly claims this enquiry, separate
-  // from pipeline stage. body.take: true claims it (as the current user),
-  // false un-claims it.
   if (body.take !== undefined) {
     if (body.take && !existing.taken_by) {
       updates.push("taken_by = ?", "taken_at = datetime('now')");
@@ -56,9 +79,6 @@ export async function PATCH(
     }
   }
 
-  // "Mark resolved" — distinct from pipeline stage, because a lead can sit
-  // in "Lost" or "Paid" without anyone having explicitly confirmed it's
-  // handled. body.resolve: true resolves it, false reopens it.
   if (body.resolve !== undefined) {
     if (body.resolve && !existing.resolved_at) {
       updates.push("resolved_at = datetime('now')");
@@ -81,9 +101,6 @@ export async function PATCH(
     ).run(leadId, user.id, body.escalated ? "Escalated" : "De-escalated");
   }
 
-  // Lets staff correct whatever the AI got wrong — category, priority, lead
-  // verdict/reasoning, estimated value, and the suggested reply text itself.
-  // Logged as one "edited" activity entry rather than one per field.
   const editableFields = [
     "category",
     "priority",

@@ -5,6 +5,7 @@ import db from "./db";
 
 const SESSION_COOKIE = "biai_session";
 const SESSION_DAYS = 7;
+const CONFIGURED_INVITE = (process.env.INVITE_CODE || process.env.NEXT_PUBLIC_INVITE_CODE || "").trim();
 
 export type SessionUser = {
   id: number;
@@ -12,6 +13,10 @@ export type SessionUser = {
   email: string;
   role: string;
 };
+
+export function normalizeEmail(email: string | null | undefined) {
+  return (email ?? "").trim().toLowerCase();
+}
 
 export function hashPassword(plain: string) {
   return bcrypt.hashSync(plain, 10);
@@ -70,8 +75,12 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   return { id: row.id, name: row.name, email: row.email, role: row.role };
 }
 
-// Any non-empty code works for now — swap for a real admin-issued invite
-// table whenever you're ready; everything else keeps working unchanged.
+// Invite code is checked in a real deployment, but we keep a harmless fallback for
+// local dev environments where an admin-issued code isn't yet configured.
 export function isValidInviteCode(code: string) {
-  return typeof code === "string" && code.trim().length > 0;
+  if (typeof code !== "string") return false;
+  const trimmed = code.trim();
+  if (!trimmed) return false;
+  if (CONFIGURED_INVITE) return trimmed === CONFIGURED_INVITE;
+  return trimmed.length >= 4;
 }

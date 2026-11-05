@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
-import { createSession, setSessionCookie, verifyPassword } from "@/lib/auth";
+import { createSession, normalizeEmail, setSessionCookie, verifyPassword } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
@@ -8,9 +8,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
   }
 
+  const normalizedEmail = normalizeEmail(email);
   const user = db
-    .prepare("SELECT id, name, email, password_hash, role FROM users WHERE email = ?")
-    .get(email) as
+    .prepare("SELECT id, name, email, password_hash, role FROM users WHERE LOWER(email) = ?")
+    .get(normalizedEmail) as
     | { id: number; name: string; email: string; password_hash: string; role: string }
     | undefined;
 
