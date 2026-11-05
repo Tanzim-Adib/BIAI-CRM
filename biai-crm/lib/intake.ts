@@ -3,6 +3,13 @@ import db from "./db";
 import { extractLead } from "./gemini";
 import { findExactDuplicateLead, findPossibleContact } from "./contact-match";
 
+function followUpDelayMs() {
+  const configured = Number(process.env.FOLLOW_UP_MS);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  // Short local test interval; production keeps the agreed 48-hour reminder.
+  return process.env.NODE_ENV === "production" ? 48 * 60 * 60 * 1000 : 48 * 1000;
+}
+
 export async function createLeadFromText(rawText: string, channel: string | null, userId: number | null) {
   const trimmedText = rawText.trim();
   const duplicate = findExactDuplicateLead(trimmedText);
@@ -26,7 +33,7 @@ export async function createLeadFromText(rawText: string, channel: string | null
   const contactId = Number(contactResult.lastInsertRowid);
   const externalId = `E-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   const reminderAt = extracted.lead_verdict === "Lead"
-    ? new Date(Date.now() + Number(process.env.FOLLOW_UP_MS || 48 * 60 * 60 * 1000)).toISOString()
+    ? new Date(Date.now() + followUpDelayMs()).toISOString()
     : null;
 
   const leadResult = db.prepare(

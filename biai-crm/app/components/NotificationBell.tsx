@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-type Escalation = { id: number; external_id?: string; category: string; contact_name: string | null; next_escalation_at: string | null };
+type TimerItem = { id: number; external_id?: string; category: string; contact_name: string | null; reminder_at: string | null };
+type Escalation = TimerItem & { next_escalation_at: string | null };
 
 function formatCountdown(deadline: string | null, now: number) {
   if (!deadline) return "—";
@@ -27,7 +28,7 @@ export default function NotificationBell() {
 
   useEffect(() => {
     load();
-    const poll = window.setInterval(load, 15000);
+    const poll = window.setInterval(load, 5000);
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
     const onVisible = () => { if (document.visibilityState === "visible") load(); };
     document.addEventListener("visibilitychange", onVisible);
@@ -44,25 +45,30 @@ export default function NotificationBell() {
 
   const total = data?.total ?? 0;
   const escalated: Escalation[] = data?.escalated ?? [];
+  const timers: TimerItem[] = data?.followUpTimers ?? [];
 
   return (
     <div className="notif-wrap" style={{ position: "relative" }}>
-      <button
-        type="button"
-        aria-label={`Notifications${total ? ` (${total})` : ""}`}
-        className="icon-btn"
-        style={{ position: "relative", border: 0, cursor: "pointer" }}
-        onClick={() => { setOpen((v) => !v); load(); }}
-      >
+      <button type="button" aria-label={`Notifications${total ? ` (${total})` : ""}`} className="icon-btn" style={{ position: "relative", border: 0, cursor: "pointer" }} onClick={() => { setOpen((v) => !v); load(); }}>
         🔔
         {total > 0 && <span style={{ position: "absolute", top: -4, right: -4, background: "var(--high)", color: "#fff", fontSize: 10, fontWeight: 800, borderRadius: 999, minWidth: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{total}</span>}
       </button>
 
       {open && (
-        <div className="avatar-menu show" style={{ width: 340, padding: 10 }}>
-          <div className="who" style={{ fontWeight: 700 }}>Notifications</div>
+        <div className="avatar-menu show" style={{ width: 360, padding: 10 }}>
+          <div className="who" style={{ fontWeight: 700 }}>Notifications & timers</div>
           {!data ? <p className="verdict-box">Loading…</p> : (
             <div style={{ maxHeight: 380, overflowY: "auto" }}>
+              {timers.length > 0 && <>
+                <div className="notif-section">⏳ Follow-up timers</div>
+                {timers.map((item) => {
+                  const remaining = item.reminder_at ? new Date(item.reminder_at).getTime() - now : 0;
+                  return <div className="notif-row" key={`t${item.id}`} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <span>{item.contact_name ?? "Unknown"} — {item.category}</span>
+                    <strong style={{ color: "#b42318", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{remaining <= 0 ? "Due now" : formatCountdown(item.reminder_at, now)}</strong>
+                  </div>;
+                })}
+              </>}
               {escalated.length > 0 && <>
                 <div className="notif-section" style={{ color: "#b42318" }}>🚨 Escalation countdowns</div>
                 {escalated.map((item) => {
@@ -73,19 +79,10 @@ export default function NotificationBell() {
                   </div>;
                 })}
               </>}
-              {data.needsAttention?.length > 0 && <>
-                <div className="notif-section">⚡ Needs attention now (High priority)</div>
-                {data.needsAttention.map((n: any) => <div className="notif-row" key={`a${n.id}`}>{n.contact_name ?? "Unknown"} {n.contact_org ? `· ${n.contact_org}` : ""} — {n.category}</div>)}
-              </>}
-              {data.overdue?.length > 0 && <>
-                <div className="notif-section">⏱ Needs follow-up</div>
-                {data.overdue.map((n: any) => <div className="notif-row" key={`o${n.id}`}>{n.contact_name ?? "Unknown"} {n.contact_org ? `· ${n.contact_org}` : ""} — {n.category}</div>)}
-              </>}
-              {data.unclaimed?.length > 0 && <>
-                <div className="notif-section">📥 Unclaimed leads</div>
-                {data.unclaimed.map((n: any) => <div className="notif-row" key={`u${n.id}`}>{n.contact_name ?? "Unknown"} {n.contact_org ? `· ${n.contact_org}` : ""} — {n.category}</div>)}
-              </>}
-              {total === 0 && data.unclaimed?.length === 0 && <p className="verdict-box">Nothing needs attention right now.</p>}
+              {data.needsAttention?.length > 0 && <><div className="notif-section">⚡ Needs attention now (High priority)</div>{data.needsAttention.map((n: any) => <div className="notif-row" key={`a${n.id}`}>{n.contact_name ?? "Unknown"} {n.contact_org ? `· ${n.contact_org}` : ""} — {n.category}</div>)}</>}
+              {data.overdue?.length > 0 && <><div className="notif-section">⏱ Follow-up overdue</div>{data.overdue.map((n: any) => <div className="notif-row" key={`o${n.id}`}>{n.contact_name ?? "Unknown"} {n.contact_org ? `· ${n.contact_org}` : ""} — {n.category}</div>)}</>}
+              {data.unclaimed?.length > 0 && <><div className="notif-section">📥 Unclaimed leads</div>{data.unclaimed.map((n: any) => <div className="notif-row" key={`u${n.id}`}>{n.contact_name ?? "Unknown"} {n.contact_org ? `· ${n.contact_org}` : ""} — {n.category}</div>)}</>}
+              {total === 0 && timers.length === 0 && <p className="verdict-box">Nothing needs attention right now.</p>}
             </div>
           )}
         </div>

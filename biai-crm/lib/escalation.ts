@@ -5,6 +5,14 @@ export function runEscalationCheck() {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
+  // In local development, make already-existing leads obey the 48-second
+  // default too, so developers can test without recreating the database.
+  if (process.env.NODE_ENV !== "production" && !process.env.FOLLOW_UP_MS) {
+    db.prepare(`UPDATE leads SET reminder_at = datetime(created_at, '+48 seconds')
+      WHERE lead_verdict = 'Lead' AND stage NOT IN ('paid','lost') AND resolved_at IS NULL
+      AND (reminder_at IS NULL OR datetime(reminder_at) > datetime(created_at, '+48 seconds'))`).run();
+  }
+
   // Existing escalations notify and roll their next deadline forward. This is
   // request-driven: the notification API runs it while the app is in use.
   const due = db.prepare(`SELECT id FROM leads WHERE escalated = 1 AND resolved_at IS NULL
@@ -20,8 +28,6 @@ export function runEscalationCheck() {
   });
   processDue();
 
-  // Start automatic escalations for overdue High-priority enquiries and log
-  // the transition so the action is visible to staff.
   const autoEscalate = db.prepare(`UPDATE leads SET escalated = 1, escalated_at = ?, next_escalation_at = ?, updated_at = datetime('now')
     WHERE escalated = 0 AND priority = 'High' AND stage NOT IN ('paid','lost')
     AND resolved_at IS NULL AND reminder_at IS NOT NULL AND datetime(reminder_at) <= datetime(?)`).run(
@@ -33,10 +39,9 @@ export function runEscalationCheck() {
       FROM leads WHERE escalated = 1 AND escalated_at = ?`).run(nowIso);
   }
 
-  // Test override is 60 seconds; production defaults to 48h.
   const unviewedMs = Number(process.env.UNVIEWED_HIGH_PRIORITY_MS || 48 * 60 * 60 * 1000);
-  db.prepare(`UPDATE leads SET priority = 'High', updated_at = 'now'
+  db.prepare(`UPDATE leads SET priority = 'High', updated_at = datetime('now')
     WHERE priority != 'High' AND stage NOT IN ('paid','lost') AND resolved_at IS NULL
-    AND datetime(COALESCE(last_seen_at, created_at), '+' || ? || ' seconds') <= datetime(?)`)
-    .run(Math.ceil(unviewedMs / 1000), nowIso);
+    AND datetime(COALESCE(last_seen_at, created_at), '+' || ? || ' milliseconds') <= datetime(?)`)
+    .run(unviewedMs, nowIso);
 }
