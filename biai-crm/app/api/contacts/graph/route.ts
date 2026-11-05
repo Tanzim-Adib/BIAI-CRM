@@ -2,53 +2,85 @@ import { NextResponse } from "next/server";
 import db from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 
-// Per contact, rolls up their most urgent lead into one node's worth of
-// data — this is AF-11's node-per-contact graph, built on the same data as
-// everything else (no new fields beyond what AF-10/AF-6 already produce).
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
-  const rows = db
-    .prepare(
-      `SELECT
-         c.id, c.name, c.org, c.channel, c.ai_summary, c.hidden_at,
-         l.id AS lead_id, l.category, l.priority, l.stage, l.lead_verdict,
-         l.lead_reasoning, l.estimated_value, l.escalated, l.resolved_at,
-         l.taken_by, u.name AS taken_by_name, l.created_at AS lead_created_at
-       FROM contacts c
-       LEFT JOIN leads l ON l.id = (
-         SELECT id FROM leads
-         WHERE contact_id = c.id
-         ORDER BY
-           CASE priority WHEN 'High' THEN 0 ELSE 1 END,
-           created_at DESC
-         LIMIT 1
-       )
-       LEFT JOIN users u ON u.id = l.taken_by
-       ORDER BY c.id`
-    )
-    .all() as any[];
+  const url = new URL(request.url);
+  const category = url.searchParams.get("category") || null;
+  const stage = url.searchParams.get("stage") || null;
+  const priority = url.searchParams.get("priority") || null;
+  const from = url.searchParams.get("from") || null;
+  const to = url.searchParams.get("to") || null;
 
-  const nodes = rows.map((r) => ({
-    id: r.id,
-    name: r.name ?? "Unknown",
-    org: r.org,
-    channel: r.channel,
-    aiSummary: r.ai_summary,
-    hidden: !!r.hidden_at,
-    leadId: r.lead_id,
-    category: r.category,
-    priority: r.priority,
-    stage: r.stage,
-    leadVerdict: r.lead_verdict,
-    leadReasoning: r.lead_reasoning,
-    estimatedValue: r.estimated_value,
-    escalated: !!r.escalated,
-    resolved: !!r.resolved_at,
-    takenByName: r.taken_by_name,
-    needsAction: !!r.escalated && !r.resolved_at,
-  }));
+  let sql = `
+    SELECT l.id, l.contact_id, l.person_id, l.category, l.priority, l.stage, l.lead_verdict, l.created_at,
+           c.name AS contact_name, c.org AS contact_org, c.person_id AS person_key
+    FROM leads l
+    LEFT JOIN contacts c ON c.id = l.contact_id
+    WHERE 1 = 1
+  `;
+  const params: any[] = [];
 
-  return NextResponse.json({ nodes });
+  if (category) {
+    sql += " AND l.category = ?";
+    params.push(category);
+  }
+  if (stage) {
+    sql += " AND l.stage = ?";
+    params.push(stage);
+  }
+  if (priority) {
+    sql += " AND l.priority = ?";
+    params.push(priority);
+  }
+  if (from) {
+    sql += " AND l.created_at >= ?";
+    params.push(from);
+  }
+  if (to) {
+    sql += " AND l.created_at <= ?";
+    params.push(to);
+  }
+
+  sql += " ORDER BY l.created_at DESC";
+
+  const rows = db.prepare(sql).all(...params) as any[];
+
+  const personNodes: any[] = [];
+  const nodes: any[] = [];
+  const links: any[] = [];
+  const seenPersons = new Map<string, string>();
+
+  for (const row of rows) {
+    const personKey = row.person_key || row.person_id || `contact:${row.contact_id}`;
+    if (!seenPersons.has(personKey)) {
+      const personId = `person:${personKey}`;
+      seenPersons.set(personKey, personId);
+      personNodes.push({
+        id: personId,
+        type: "person",
+        name: row.contact_name || "Unknown",
+        org: row.contact_org || null,
+      });
+    }
+
+    const leadId = `lead:${row.id}`;
+    nodes.push({
+      id: leadId,
+      type: "lead",
+      leadId: row.id,
+      personId: seenPersons.get(personKey),
+      name: row.contact_name || "Unknown",
+      category: row.category,
+      stage: row.stage,
+      priority: row.priority,
+      verdict: row.lead_verdict,
+      createdAt: row.created_at,
+      hidden: false,
+    });
+    links.push({ source: seenPersons.get(personKey), target: leadId });
+  }
+
+  return NextResponse.json({ nodes: [...personNodes, ...nodes], links });
 }

@@ -101,6 +101,15 @@ export async function PATCH(
     ).run(leadId, user.id, body.escalated ? "Escalated" : "De-escalated");
   }
 
+  if (body.last_seen_at !== undefined) {
+    updates.push("last_seen_at = ?");
+    values.push(String(body.last_seen_at));
+  }
+
+  if (body.category !== undefined || body.priority !== undefined || body.lead_verdict !== undefined || body.lead_reasoning !== undefined || body.estimated_value !== undefined || body.suggested_reply !== undefined) {
+    // handled below
+  }
+
   const editableFields = [
     "category",
     "priority",

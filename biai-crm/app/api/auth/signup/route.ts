@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
-import { createSession, hashPassword, isValidInviteCode, normalizeEmail, setSessionCookie, verifyPassword } from "@/lib/auth";
+import {
+  createSession,
+  hashPassword,
+  isValidInviteCode,
+  normalizeEmail,
+  setSessionCookie,
+  verifyPassword,
+} from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   const { name, email, password, inviteCode } = await req.json();
@@ -23,7 +30,7 @@ export async function POST(req: NextRequest) {
     .prepare(
       "INSERT INTO users (name, email, password_hash, role, invite_code_used) VALUES (?, ?, ?, 'staff', ?)"
     )
-    .run(name.trim(), normalizedEmail, passwordHash, inviteCode.trim());
+    .run(String(name).trim(), normalizedEmail, passwordHash, String(inviteCode).trim());
 
   const { token, expires } = createSession(Number(info.lastInsertRowid));
   await setSessionCookie(token, expires);

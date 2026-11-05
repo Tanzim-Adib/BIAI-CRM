@@ -75,8 +75,6 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   return { id: row.id, name: row.name, email: row.email, role: row.role };
 }
 
-// Invite code is checked in a real deployment, but we keep a harmless fallback for
-// local dev environments where an admin-issued code isn't yet configured.
 export function isValidInviteCode(code: string) {
   if (typeof code !== "string") return false;
   const trimmed = code.trim();
