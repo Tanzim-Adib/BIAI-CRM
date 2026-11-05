@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS contacts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  person_id TEXT UNIQUE,
   name TEXT,
   phone TEXT,
   email TEXT,
@@ -39,11 +40,14 @@ CREATE TABLE IF NOT EXISTS contacts (
   channel TEXT, -- 'whatsapp' | 'facebook' | 'website' | 'phone'
   ai_summary TEXT, -- AI's running read on this contact (tone, likely intent),
                     -- built by the per-lead "Ask AI" chat; feeds the contact graph
+  hidden_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS leads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_id TEXT UNIQUE,
+  person_id TEXT,
   contact_id INTEGER NOT NULL,
   raw_text TEXT NOT NULL,            -- original pasted conversation/notes
   channel TEXT,
@@ -60,6 +64,7 @@ CREATE TABLE IF NOT EXISTS leads (
   taken_by INTEGER,                  -- user_id who claimed ("Lead taken") this enquiry; distinct from stage
   taken_at TEXT,
   resolved_at TEXT,                  -- set when staff explicitly marks it resolved; distinct from stage too
+  coin_status TEXT NOT NULL DEFAULT 'not_eligible',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (contact_id) REFERENCES contacts(id),
@@ -74,6 +79,19 @@ CREATE TABLE IF NOT EXISTS activity_log (
   detail TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (lead_id) REFERENCES leads(id)
+);
+
+CREATE TABLE IF NOT EXISTS lead_stage_proof (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id INTEGER NOT NULL,
+  stage TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  file_mime TEXT NOT NULL,
+  uploaded_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (lead_id) REFERENCES leads(id),
+  FOREIGN KEY (uploaded_by) REFERENCES users(id)
 );
 `);
 
@@ -92,6 +110,11 @@ for (const stmt of [
   // Surfaced as a heads-up in the UI so staff can ask the sender directly
   // rather than the system silently assuming or revealing prior history.
   "ALTER TABLE leads ADD COLUMN possible_contact_id INTEGER",
+  "ALTER TABLE contacts ADD COLUMN person_id TEXT UNIQUE",
+  "ALTER TABLE leads ADD COLUMN external_id TEXT UNIQUE",
+  "ALTER TABLE leads ADD COLUMN coin_status TEXT NOT NULL DEFAULT 'not_eligible'",
+  "ALTER TABLE leads ADD COLUMN person_id TEXT",
+  "ALTER TABLE lead_stage_proof ADD COLUMN stage TEXT",
 ]) {
   try {
     db.exec(stmt);
