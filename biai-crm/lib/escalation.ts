@@ -1,21 +1,25 @@
 import db from "./db";
 
-// AF-9: tiered escalation. A High-priority lead whose 48h reminder has
-// passed AND sat unactioned for a further 24h (72h total) auto-escalates —
-// no real email/telephony hookup here (that needs a paid provider, out of
-// scope under the free-tier constraint), but the escalated flag is real and
-// drives the notifications bell, the contact-graph red state (AF-11), and
-// the Dashboard's escalated count. Called from any route that reads lead
-// state, so the check runs on normal page loads rather than needing a cron.
 export function runEscalationCheck() {
-  db.prepare(
-    `UPDATE leads
-     SET escalated = 1
-     WHERE escalated = 0
-       AND priority = 'High'
-       AND stage NOT IN ('paid', 'lost')
-       AND resolved_at IS NULL
-       AND reminder_at IS NOT NULL
-       AND datetime(reminder_at, '+24 hours') < datetime('now')`
-  ).run();
+  const intervalMs = Number(process.env.ESCALATION_INTERVAL_MS || 12 * 60 * 60 * 1000);
+  const now = new Date().toISOString();
+  const overdueEscalations = db.prepare("SELECT id FROM leads WHERE escalated = 1 AND resolved_at IS NULL AND stage NOT IN ('paid','lost') AND next_escalation_at IS NOT NULL AND datetime(next_escalation_at) <= datetime(?)").all(now) as Array<{id:number}>;
+  const reset = db.prepare("UPDATE leads SET next_escalation_at = ?, updated_at = datetime('now') WHERE id = ?");
+  const notify = db.prepare("INSERT INTO activity_log (lead_id, user_id, action, detail) VALUES (?, NULL, 'escalation_reminder', ?)");
+  for (const lead of overdueEscalations) {
+    db.transaction(() => {
+      notify.run(lead.id, "Escalation timer elapsed; reminder generated.");
+      reset.run(new Date(Date.now() + intervalMs).toISOString(), lead.id);
+    })();
+  }
+
+  const unviewedMs = Number(process.env.UNVIEWED_HIGH_PRIORITY_MS || 60 * 1000);
+  db.prepare(`UPDATE leads SET priority = 'High', updated_at = datetime('now')
+    WHERE priority != 'High' AND stage NOT IN ('paid','lost') AND resolved_at IS NULL
+    AND datetime(COALESCE(last_seen_at, created_at), '+' || ? || ' milliseconds') <= datetime(?)`)
+    .run(unviewedMs, now);
+
+  const initialReminderMs = Number(process.env.FOLLOW_UP_MS || 48 * 60 * 60 * 1000);
+  db.prepare("UPDATE leads SET reminder_at = ? WHERE reminder_at IS NULL AND lead_verdict = 'Lead' AND stage = 'new'")
+    .run(new Date(Date.now() + initialReminderMs).toISOString());
 }
